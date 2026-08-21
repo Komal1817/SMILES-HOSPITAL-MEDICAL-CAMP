@@ -1,5 +1,232 @@
 const GOOGLE_SCRIPT_URL ="https://script.google.com/macros/s/AKfycbyEViQDbOFTdA9UIJLPFoNxf0WdX1NIjllmYqwQAGPp8HEGZisiuXq1oSvsF43PwG0DTQ/exec"
 
+
+/* =========================================================
+   CENTRAL MULTI-DEVICE STATE
+
+   Google Apps Script is the source of truth for camps, doctors,
+   active camp and printing configuration. localStorage is only a
+   cache so a tablet can still render while the network is starting.
+========================================================= */
+
+let adminSessionToken =
+    sessionStorage.getItem("smilesAdminSessionToken") || "";
+
+let centralConfigVersion = 0;
+let centralPatientVersion = 0;
+let centralSyncTimer = null;
+let patientSyncTimer = null;
+
+
+async function postToGoogleScript(payload) {
+
+    const response = await fetch(
+        GOOGLE_SCRIPT_URL,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify(payload)
+        }
+    );
+
+    const result = await response.json();
+
+    if (!result.ok) {
+        throw new Error(
+            result.error || "Google Apps Script request failed."
+        );
+    }
+
+    return result;
+}
+
+
+async function adminLoginToServer(username, password) {
+
+    const result = await postToGoogleScript({
+        action: "adminLogin",
+        username,
+        password
+    });
+
+    adminSessionToken = result.token || "";
+
+    if (adminSessionToken) {
+        sessionStorage.setItem(
+            "smilesAdminSessionToken",
+            adminSessionToken
+        );
+    }
+
+    return result;
+}
+
+
+function clearAdminSession() {
+    adminSessionToken = "";
+    sessionStorage.removeItem("smilesAdminSessionToken");
+    isAdmin = false;
+}
+
+
+function mergeCentralConfiguration(shared) {
+
+    return {
+        ...DEFAULT_CONFIG,
+        ...config,
+        ...(shared || {}),
+        margins: {
+            ...DEFAULT_CONFIG.margins,
+            ...(config?.margins || {}),
+            ...(shared?.margins || {})
+        },
+        letterheadProfiles: {
+            ...(config?.letterheadProfiles || {}),
+            ...(shared?.letterheadProfiles || {})
+        }
+    };
+}
+
+
+function applyCentralApplicationState(result) {
+
+    if (!result || !result.configured) {
+        return false;
+    }
+
+    const incomingCamps = Array.isArray(result.camps)
+        ? result.camps
+        : [];
+
+    const incomingDoctors = Array.isArray(result.doctors)
+        ? result.doctors
+        : [];
+
+    camps = incomingCamps;
+    doctors = incomingDoctors;
+    config = mergeCentralConfiguration(result.config);
+
+    centralConfigVersion = Number(result.version || 0);
+    centralPatientVersion = Number(result.patientVersion || 0);
+
+    persistAll();
+    renderAdminLists();
+    updateApplication();
+    updatePrintStyles();
+    loadLetterheadSettingsToAdmin();
+    updateLetterheadMarginPreview();
+
+    return true;
+}
+
+
+async function loadCentralApplicationState(strict = false) {
+
+    try {
+        const result = await postToGoogleScript({
+            action: "getAppState"
+        });
+
+        if (result.configured) {
+            applyCentralApplicationState(result);
+        }
+
+        return result;
+    }
+    catch (error) {
+        console.warn(
+            "Central application state could not be loaded:",
+            error
+        );
+
+        if (strict) throw error;
+        return null;
+    }
+}
+
+
+async function saveCentralApplicationState() {
+
+    if (!isAdmin || !adminSessionToken) {
+        throw new Error(
+            "Admin authorization is required or the admin session has expired. Please log in again."
+        );
+    }
+
+    const result = await postToGoogleScript({
+        action: "saveAppState",
+        adminToken: adminSessionToken,
+        camps,
+        doctors,
+        config: {
+            ...config,
+            letterhead:
+                String(config.letterhead || "").startsWith("data:")
+                    ? ""
+                    : config.letterhead || ""
+        }
+    });
+
+    if (result.configured) {
+        applyCentralApplicationState(result);
+    }
+
+    return result;
+}
+
+
+async function syncCentralApplicationState() {
+
+    if (isAdmin) return;
+
+    try {
+        const result = await postToGoogleScript({
+            action: "getAppState"
+        });
+
+        const version = Number(result.version || 0);
+
+        if (result.configured && version !== centralConfigVersion) {
+            applyCentralApplicationState(result);
+        }
+    }
+    catch (error) {
+        console.warn(
+            "Background configuration sync failed:",
+            error
+        );
+    }
+}
+
+
+function startCentralSynchronization() {
+
+    if (centralSyncTimer) clearInterval(centralSyncTimer);
+    if (patientSyncTimer) clearInterval(patientSyncTimer);
+
+    centralSyncTimer = setInterval(
+        syncCentralApplicationState,
+        5000
+    );
+
+    patientSyncTimer = setInterval(
+        async function () {
+            if (isAdmin) return;
+            try {
+                await loadPatientsFromGoogleSheets();
+            } catch (error) {
+                console.warn(
+                    "Background patient synchronization failed:",
+                    error
+                );
+            }
+        },
+        10000
+    );
+}
+
 /* =========================================================
    GOOGLE SHEETS
 ========================================================= */
@@ -23,6 +250,9 @@ async function savePatientToGoogleSheets(patient) {
 
                         action:
                             "savePatient",
+
+                        adminToken:
+                            patient.adminToken || "",
 
                         patient:
                             patient
@@ -166,7 +396,8 @@ async function deletePatientFromGoogleSheets(patientId) {
             },
             body: JSON.stringify({
                 action: "deletePatient",
-                patientId: patientId
+                patientId: patientId,
+                adminToken: adminSessionToken
             })
         }
     );
@@ -248,6 +479,10 @@ async function loadSharedLetterheadConfiguration() {
             );
         }
 
+        if (result.configured === false) {
+            return config;
+        }
+
         if (result.configuration) {
             const shared = result.configuration;
 
@@ -312,6 +547,7 @@ async function saveSharedLetterheadConfiguration() {
             },
             body: JSON.stringify({
                 action: "saveLetterheadConfiguration",
+                adminToken: adminSessionToken,
                 configuration: {
                     letterhead: config.letterhead || "",
                     letterheadType: config.letterheadType || "",
@@ -728,12 +964,14 @@ function addCamp() {
 
     updateApplication();
 
-
-    showStatus(
-        "adminStatus",
-        "Camp added successfully.",
-        "success"
-    );
+    void saveCentralApplicationState()
+        .then(function () {
+            showStatus("adminStatus", "Camp added and shared with all tablets.", "success");
+        })
+        .catch(function (error) {
+            console.error("Central camp save failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 
 }
 
@@ -815,6 +1053,12 @@ function deleteCamp(id) {
 
     updateApplication();
 
+    void saveCentralApplicationState()
+        .catch(function (error) {
+            console.error("Central camp deletion save failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
+
 }
 
 
@@ -839,6 +1083,12 @@ function changeActiveCamp() {
     updateApplication();
 
     renderAdminLists();
+
+    void saveCentralApplicationState()
+        .catch(function (error) {
+            console.error("Central active-camp save failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 
 }
 
@@ -913,12 +1163,14 @@ function addDoctor() {
 
     updateDoctorDropdown();
 
-
-    showStatus(
-        "adminStatus",
-        "Doctor added successfully.",
-        "success"
-    );
+    void saveCentralApplicationState()
+        .then(function () {
+            showStatus("adminStatus", "Doctor added and shared with all tablets.", "success");
+        })
+        .catch(function (error) {
+            console.error("Central doctor save failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 
 }
 
@@ -941,6 +1193,12 @@ function deleteDoctor(id) {
     renderAdminLists();
 
     updateDoctorDropdown();
+
+    void saveCentralApplicationState()
+        .catch(function (error) {
+            console.error("Central doctor deletion save failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 
 }
 
@@ -974,11 +1232,14 @@ function editCamp(id) {
     renderAdminLists();
     updateApplication();
 
-    showStatus(
-        "adminStatus",
-        "Camp updated successfully.",
-        "success"
-    );
+    void saveCentralApplicationState()
+        .then(function () {
+            showStatus("adminStatus", "Camp updated and shared with all tablets.", "success");
+        })
+        .catch(function (error) {
+            console.error("Central camp update failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 }
 
 
@@ -1021,11 +1282,14 @@ function editDoctor(id) {
     renderAdminLists();
     updateDoctorDropdown();
 
-    showStatus(
-        "adminStatus",
-        "Doctor updated successfully.",
-        "success"
-    );
+    void saveCentralApplicationState()
+        .then(function () {
+            showStatus("adminStatus", "Doctor updated and shared with all tablets.", "success");
+        })
+        .catch(function (error) {
+            console.error("Central doctor update failed:", error);
+            showStatus("adminStatus", error.message, "error");
+        });
 }
 
 
@@ -1568,6 +1832,7 @@ async function saveConfiguration() {
     try {
 
         await saveSharedLetterheadConfiguration();
+        await saveCentralApplicationState();
 
         showStatus(
             "adminStatus",
@@ -2081,6 +2346,17 @@ function deleteLetterhead(
 
     persistAll();
 
+    if (isAdmin && adminSessionToken) {
+        void postToGoogleScript({
+            action: "deleteLetterheadConfiguration",
+            adminToken: adminSessionToken
+        })
+            .catch(function (error) {
+                console.error("Central letterhead deletion failed:", error);
+                showStatus("adminStatus", error.message, "error");
+            });
+    }
+
 
     if (showMessage) {
 
@@ -2250,94 +2526,51 @@ function adminLogin(event) {
 
     event.preventDefault();
 
-
     const username =
-        document
-            .getElementById(
-                "adminUsername"
-            )
-            .value
-            .trim();
-
+        document.getElementById("adminUsername").value.trim();
 
     const password =
-        document
-            .getElementById(
-                "adminPassword"
-            )
-            .value;
-
+        document.getElementById("adminPassword").value;
 
     const status =
-        document.getElementById(
-            "adminLoginStatus"
-        );
+        document.getElementById("adminLoginStatus");
 
+    status.className = "status";
+    status.textContent = "Checking...";
 
-    if (
-        username === "admin" &&
-        password === "admin123"
-    ) {
+    adminLoginToServer(username, password)
+        .then(async function () {
 
-        isAdmin = true;
+            isAdmin = true;
+            status.className = "status success";
+            status.textContent = "Login successful.";
 
-        status.className =
-            "status success";
+            await loadCentralApplicationState(true);
 
-
-        status.textContent =
-            "Login successful.";
-
-
-        setTimeout(
-            function () {
+            setTimeout(function () {
+                document
+                    .getElementById("adminLoginModal")
+                    .classList.remove("active");
 
                 document
-                    .getElementById(
-                        "adminLoginModal"
-                    )
-                    .classList.remove(
-                        "active"
-                    );
-
-
-                document
-                    .getElementById(
-                        "adminLoginForm"
-                    )
+                    .getElementById("adminLoginForm")
                     .reset();
 
-
-                status.className =
-                    "status";
-
-
-                status.textContent =
-                    "";
-
-
+                status.className = "status";
+                status.textContent = "";
                 openAdminPanel();
+            }, 250);
 
-            },
-            250
-        );
-
-
-        return false;
-
-    }
-
-
-    status.className =
-        "status error";
-
-
-    status.textContent =
-        "Invalid username or password.";
-
+        })
+        .catch(function (error) {
+            clearAdminSession();
+            status.className = "status error";
+            status.textContent =
+                error.message ||
+                "Invalid username or password.";
+        });
 
     return false;
-
 }
 
 
@@ -3169,7 +3402,12 @@ document
                         : new Date().toISOString(),
 
                 generateServerUHID:
-                    !editingPatientId
+                    !editingPatientId,
+
+                adminToken:
+                    editingPatientId
+                        ? adminSessionToken
+                        : ""
 
             };
 
@@ -4164,6 +4402,7 @@ async function initialize() {
 
     try {
 
+        await loadCentralApplicationState();
         await loadSharedLetterheadConfiguration();
         await loadPatientsFromGoogleSheets();
 
@@ -4177,6 +4416,8 @@ async function initialize() {
         );
 
     }
+
+    startCentralSynchronization();
 
 }
 

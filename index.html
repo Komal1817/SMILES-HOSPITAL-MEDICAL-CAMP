@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Medical Camp Patient Registration</title>
+
+    <link rel="stylesheet" href="css/style.css">
+
+</head>
+
+
+<body>
+
+
+    <!-- =========================================================
+     HEADER
+========================================================= -->
+
+    <header class="topbar">
+
+        <div class="brand">
+
+            <div class="brand-logo">
+                ✚
+            </div>
+
+            <div>
+
+                <h1>
+                    Medical Camp Registration
+                </h1>
+
+                <small>
+                    Patient Management System
+                </small>
+
+            </div>
+
+        </div>
+
+
+        <div class="header-actions">
+
+            <button class="btn btn-light" onclick="openAdmin()">
+
+                ⚙ Admin
+
+            </button>
+
+        </div>
+
+    </header>
+
+
+
+    <div class="container">
+
+
+        <!-- =========================================================
+     REGISTRATION
+========================================================= -->
+
+        <div class="grid">
+
+
+            <div class="card">
+
+                <div class="card-header">
+
+                    <h2>
+                        Patient Registration
+                    </h2>
+
+                    <p>
+                        Register patient information for the active medical camp.
+                    </p>
+
+                </div>
+
+
+                <div class="card-body">
+
+
+                    <!-- CAMP INFORMATION -->
+
+                    <div class="camp-info">
+
+                        <div class="info-box">
+
+                            <div class="info-label">
+                                Active Camp
+                            </div>
+
+                            <div class="info-value" id="displayCampName">
+
+                                Medical Camp
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="info-box">
+
+                            <div class="info-label">
+                                Camp Date
+                            </div>
+
+                            <div class="info-value" id="displayCampDate">
+
+                                —
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- PHOTO -->
+
+                    <div class="photo-section">
+
+
+                        <div class="photo-preview" id="photoPreview">
+
+                            No Photo
+
+                        </div>
+
+
+                        <div>
+
+                            <strong>
+                                Patient Photograph
+                            </strong>
+
+                            <p style="
+                font-size:11px;
+                color:#667085;
+                margin:5px 0 0;
+            ">
+
+                                Capture or upload the patient's photograph.
+
+                            </p>
+
+
+                            <div class="photo-buttons">
+
+                                <button type="button" class="btn btn-primary" onclick="openCamera()">
+
+                                    📷 Take Photo
+
+                                </button>
+
+
+                                <button type="button" class="btn btn-secondary" onclick="
+                    document
+                    .getElementById('photoInput')
+                    .click()
+                ">
+
+                                    🖼 Upload Photo
+
+                                </button>
+
+
+                                <input type="file" id="photoInput" accept="image/png, image/jpeg," capture="environment"
+                                    style="display:none" onchange="handlePhotoUpload(event)">
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+
+                    <!-- FORM -->
+
+                    <form id="patientForm">
+
+
+                        <div class="form-grid">
+
+
+                            <!-- UHID -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    UHID *
+                                </label>
+
+                                <input id="patientId" type="text" readonly>
+
+                            </div>
+
+
+                            <!-- PATIENT NAME -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Patient Name *
+                                </label>
+
+                                <input id="patientName" type="text" required placeholder="Enter full name">
+
+                            </div>
+
+
+                            <!-- AGE -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Age *
+                                </label>
+
+                                <input id="age" type="number" min="0" max="120" required placeholder="Age">
+
+                            </div>
+
+
+                            <!-- GENDER -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Gender *
+                                </label>
+
+                                <select id="gender" required>
+
+                                    <option value="">
+                                        Select Gender
+                                    </option>
+
+                                    <option>
+                                        Male
+                                    </option>
+
+                                    <option>
+                                        Female
+                                    </option>
+
+                                    <option>
+                                        Other
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+
+                            <!-- MOBILE -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Mobile Number
+                                </label>
+
+                                <input id="mobile" type="tel" placeholder="Mobile number">
+
+                            </div>
+
+
+                            <!-- BLOOD -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Blood Group
+                                </label>
+
+                                <select id="bloodGroup">
+
+                                    <option value="">
+                                        Select
+                                    </option>
+
+                                    <option>A+</option>
+                                    <option>A-</option>
+                                    <option>B+</option>
+                                    <option>B-</option>
+                                    <option>AB+</option>
+                                    <option>AB-</option>
+                                    <option>O+</option>
+                                    <option>O-</option>
+
+                                </select>
+
+                            </div>
+
+
+                            <!-- YESHASVINI -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Yeshasvini
+                                </label>
+
+                                <select id="yeshasvini">
+
+                                    <option value="">
+                                        Select
+                                    </option>
+
+                                    <option value="Yes">
+                                        Yes
+                                    </option>
+
+                                    <option value="No">
+                                        No
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+
+                            <!-- DOCTOR -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Doctor
+                                </label>
+
+                                <select id="doctor">
+
+                                    <option value="">
+                                        Select Doctor
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+
+                            <!-- ADDRESS -->
+
+                            <div class="form-group full">
+
+                                <label>
+                                    Address
+                                </label>
+
+                                <textarea id="address" placeholder="Patient address"></textarea>
+
+                            </div>
+
+
+                            <!-- COMPLAINT -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Chief Complaint
+                                </label>
+
+                                <input id="complaint" type="text" placeholder="Reason for visit">
+
+                            </div>
+
+
+                            <!-- CAMP -->
+
+                            <div class="form-group">
+
+                                <label>
+                                    Camp
+                                </label>
+
+                                <input id="formCamp" type="text" readonly>
+
+                            </div>
+
+
+                        </div>
+
+
+                        <div id="formStatus" class="status">
+                        </div>
+
+
+                        <div class="form-actions">
+
+
+                            <button type="button" class="btn btn-secondary" onclick="clearForm()">
+
+                                Clear
+
+                            </button>
+
+
+                            <button type="submit" class="btn btn-primary">
+
+                                ✓ Register Patient & Print
+
+                            </button>
+
+
+                        </div>
+
+
+                    </form>
+
+
+                </div>
+
+            </div>
+
+
+
+            <!-- =========================================================
+     SIDE
+========================================================= -->
+
+            <div>
+
+
+                <div class="card">
+
+                    <div class="card-header">
+
+                        <h2>
+                            Camp Details
+                        </h2>
+
+                        <p>
+                            Current configuration
+                        </p>
+
+                    </div>
+
+
+                    <div class="card-body">
+
+
+                        <div class="side-stat">
+
+                            <div class="side-stat-label">
+                                Active Camp
+                            </div>
+
+                            <div class="side-stat-value" id="sideCampName">
+
+                                Medical Camp
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="side-stat">
+
+                            <div class="side-stat-label">
+                                Camp Date
+                            </div>
+
+                            <div class="side-stat-value" id="sideCampDate">
+
+                                —
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="side-stat">
+
+                            <div class="side-stat-label">
+                                Registered Patients
+                            </div>
+
+                            <div class="count-number" id="patientCount">
+
+                                0
+
+                            </div>
+
+                        </div>
+
+
+                        <button class="btn btn-secondary" style="width:100%;" onclick="openAdmin()">
+
+                            ⚙ Configure Camps & Doctors
+
+                        </button>
+
+
+                    </div>
+
+                </div>
+
+
+                <div class="card" style="margin-top:20px;">
+
+                    <div class="card-header">
+
+                        <h2>
+                            Export
+                        </h2>
+
+                        <p>
+                            Download patient records
+                        </p>
+
+                    </div>
+
+
+                    <div class="card-body">
+
+                        <button class="btn btn-success" style="width:100%;" onclick="downloadExcel()">
+
+                            📊 Download Excel
+
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+            </div>
+
+
+        </div>
+
+
+
+        <!-- =========================================================
+     PATIENT LIST
+========================================================= -->
+
+        <div class="card" style="margin-top:25px;">
+
+            <div class="card-header">
+
+                <h2>
+                    Recent Registrations
+                </h2>
+
+                <p>
+                    Registered patients
+                </p>
+
+            </div>
+
+
+            <div class="card-body">
+
+                <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+
+                    <div style="flex:1;min-width:240px;">
+
+                        <input
+                            id="patientSearch"
+                            type="search"
+                            placeholder="Search by UHID, patient name, mobile, doctor or camp..."
+                            oninput="searchPatients(this.value)"
+                            autocomplete="off">
+
+                    </div>
+
+                    <button
+                        type="button"
+                        class="btn btn-secondary"
+                        onclick="document.getElementById('patientSearch').value=''; searchPatients('');">
+                        Clear Search
+                    </button>
+
+                </div>
+
+                <div class="table-wrapper">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+
+                                <th>
+                                    Photo
+                                </th>
+
+                                <th>
+                                    UHID
+                                </th>
+
+                                <th>
+                                    Patient
+                                </th>
+
+                                <th>
+                                    Age
+                                </th>
+
+                                <th>
+                                    Gender
+                                </th>
+
+                                <th>
+                                    Yeshasvini
+                                </th>
+
+                                <th>
+                                    Doctor
+                                </th>
+
+                                <th>
+                                    Camp
+                                </th>
+
+                                <th>
+                                    Mobile
+                                </th>
+
+                                <th>
+                                    Action
+                                </th>
+
+                            </tr>
+
+                        </thead>
+
+
+                        <tbody id="patientTableBody">
+
+                        </tbody>
+
+
+                    </table>
+
+                </div>
+
+
+            </div>
+
+        </div>
+
+
+    </div>
+
+
+
+    <!-- =========================================================
+     ADMIN MODAL
+========================================================= -->
+
+    <div class="modal" id="adminModal">
+
+
+        <div class="modal-content">
+
+
+            <div class="modal-header">
+
+                <div>
+
+                    <strong>
+                        Administration Panel
+                    </strong>
+
+                    <div style="
+                color:#667085;
+                font-size:11px;
+                margin-top:3px;
+            ">
+
+                        Camps, doctors, letterhead and printing configuration
+
+                    </div>
+
+                </div>
+
+
+                <button class="btn btn-secondary" onclick="closeAdmin()">
+
+                    ✕
+
+                </button>
+
+            </div>
+
+
+            <div class="modal-body">
+
+
+                <div class="admin-grid">
+
+
+                    <!-- =====================================================
+     CAMP MANAGEMENT
+===================================================== -->
+
+                    <div class="setting-box">
+
+                        <h3>
+                            🏥 Camp Management
+                        </h3>
+
+
+                        <div class="form-group">
+
+                            <label>
+                                Camp Name
+                            </label>
+
+                            <input id="newCampName" type="text" placeholder="Example: Cardiac Health Camp">
+
+                        </div>
+
+
+                        <div style="
+        margin-top:10px;
+        display:flex;
+        gap:8px;
+    ">
+
+                            <button class="btn btn-primary" onclick="addCamp()">
+
+                                + Add Camp
+
+                            </button>
+
+                        </div>
+
+
+                        <div class="admin-list" id="campList">
+                        </div>
+
+
+                        <div style="margin-top:12px;" class="form-group">
+
+                            <label>
+                                Active Camp
+                            </label>
+
+                            <select id="activeCampSelect" onchange="changeActiveCamp()">
+
+                            </select>
+
+                        </div>
+
+
+                    </div>
+
+
+
+                    <!-- =====================================================
+     DOCTOR MANAGEMENT
+===================================================== -->
+
+                    <div class="setting-box">
+
+                        <h3>
+                            👨‍⚕️ Doctor Management
+                        </h3>
+
+
+                        <div class="form-group">
+
+                            <label>
+                                Doctor Name
+                            </label>
+
+                            <input id="newDoctorName" type="text" placeholder="Dr. John Smith">
+
+                        </div>
+
+
+                        <div class="form-group" style="margin-top:10px;">
+
+                            <label>
+                                Doctor's Camp
+                            </label>
+
+                            <select id="newDoctorCamp">
+
+                            </select>
+
+                        </div>
+
+
+                        <div style="
+        margin-top:10px;
+        display:flex;
+        gap:8px;
+    ">
+
+                            <button class="btn btn-primary" onclick="addDoctor()">
+
+                                + Add Doctor
+
+                            </button>
+
+                        </div>
+
+
+                        <div class="admin-list" id="doctorList">
+                        </div>
+
+
+                    </div>
+
+
+
+                    <!-- =====================================================
+     LETTERHEAD
+===================================================== -->
+
+                    <div class="setting-box">
+
+                        <h3>📄 Letterhead</h3>
+
+                        <div class="upload-box">
+                            <strong>Upload Letterhead</strong>
+                            <p>PNG, JPG, JPEG or PDF</p>
+                            <input type="file" id="letterheadInput" accept="image/png,image/jpeg,application/pdf"
+                                onchange="handleLetterhead(event)">
+                        </div>
+
+                        <div id="letterheadPreviewContainer"
+                            style="display:none;margin-top:12px;padding:10px;border:1px solid #d9e2e7;border-radius:8px;background:#f8fafb;">
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;">
+                                <strong id="letterheadFileName"
+                                    style="font-size:12px;color:#344054;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Letterhead</strong>
+                                <button type="button" class="btn btn-danger" onclick="deleteLetterhead()">🗑
+                                    Delete</button>
+                            </div>
+                            <img id="letterheadPreview" alt="Letterhead Preview"
+                                style="display:none;width:100%;max-height:300px;object-fit:contain;border:1px solid #d9e2e7;border-radius:6px;background:white;">
+                            <iframe id="letterheadPdfPreview" title="Letterhead PDF Preview"
+                                style="display:none;width:100%;height:300px;border:1px solid #d9e2e7;border-radius:6px;background:white;"></iframe>
+                        </div>
+
+                    </div>
+
+                    <!-- =====================================================
+     MARGINS
+===================================================== -->
+
+                    <div class="setting-box">
+
+                        <h3>
+                            📐 Letterhead Header / Footer & Content Area
+                        </h3>
+
+
+                        <p style="
+        font-size:11px;
+        color:#667085;
+        margin-top:-7px;
+        line-height:1.5;
+    ">
+
+                            These settings are saved separately for each uploaded letterhead.
+                            Top controls the header boundary, Bottom controls the footer boundary,
+                            and Left/Right control the patient content area.
+
+                        </p>
+
+
+                        <div class="margin-grid">
+
+
+                            <div class="form-group">
+
+                                <label>
+                                    Header / Top
+                                </label>
+
+                                <div class="unit-input">
+
+                                    <input id="marginTop" type="number" min="0" max="250" step="1">
+
+                                    <span>
+                                        mm
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>
+                                    Right
+                                </label>
+
+                                <div class="unit-input">
+
+                                    <input id="marginRight" type="number" min="0" max="100" step="1">
+
+                                    <span>
+                                        mm
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>
+                                    Footer / Bottom
+                                </label>
+
+                                <div class="unit-input">
+
+                                    <input id="marginBottom" type="number" min="0" max="100" step="1">
+
+                                    <span>
+                                        mm
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>
+                                    Left
+                                </label>
+
+                                <div class="unit-input">
+
+                                    <input id="marginLeft" type="number" min="0" max="100" step="1">
+
+                                    <span>
+                                        mm
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                        </div>
+
+
+                        <div style="
+        margin-top:13px;
+        padding:11px;
+        background:#eef8f7;
+        border-radius:8px;
+        color:#07514e;
+        font-size:11px;
+        line-height:1.5;
+    ">
+
+                            <strong>Tip:</strong>
+                            Increase Header / Top to move the patient area down.
+                            Increase Footer / Bottom to reserve more space for the footer.
+                            Settings are remembered separately for each letterhead file.
+
+                        </div>
+
+                        <div id="letterheadMarginPreview" class="letterhead-margin-preview" style="display:none;">
+                            <div class="letterhead-margin-preview-title">Live A5 Print Area Preview</div>
+                            <div class="letterhead-margin-preview-sheet" id="letterheadMarginPreviewSheet">
+                                <div class="letterhead-margin-preview-header" id="letterheadMarginPreviewHeader">HEADER</div>
+                                <div class="letterhead-margin-preview-content" id="letterheadMarginPreviewContent">
+                                    <strong>PATIENT INFORMATION</strong>
+                                    <span>UHID • Patient Name • Doctor</span>
+                                    <span>Other patient information</span>
+                                </div>
+                                <div class="letterhead-margin-preview-footer" id="letterheadMarginPreviewFooter">FOOTER</div>
+                            </div>
+                            <div id="letterheadMarginPreviewValues" class="letterhead-margin-preview-values"></div>
+                        </div>
+
+
+                    </div>
+
+
+                    <!-- FULL WIDTH -->
+
+                    <div class="setting-box full">
+
+                        <h3>
+                            💾 Save Configuration
+                        </h3>
+
+
+                        <p style="
+        color:#667085;
+        font-size:11px;
+        margin:0;
+    ">
+
+                            Camp, doctor, letterhead and margin settings are
+                            saved for this application.
+
+                        </p>
+
+
+                        <div id="adminStatus" class="status">
+                        </div>
+
+
+                        <div style="
+        display:flex;
+        justify-content:flex-end;
+        gap:9px;
+        margin-top:15px;
+    ">
+
+                            <button class="btn btn-secondary" onclick="closeAdmin()">
+
+                                Close
+
+                            </button>
+
+
+                            <button class="btn btn-primary" onclick="saveConfiguration()">
+
+                                💾 Save Configuration
+
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+    <!-- =========================================================
+     ADMIN LOGIN MODAL
+========================================================= -->
+    <div class="modal" id="adminLoginModal">
+        <div class="modal-content admin-login-content">
+            <div class="modal-header">
+                <div>
+                    <strong>Admin Login</strong>
+                    <div class="admin-login-subtitle">Authorized access only</div>
+                </div>
+                <button class="btn btn-secondary" type="button" onclick="closeAdminLogin()">✕</button>
+            </div>
+            <div class="modal-body">
+                <form id="adminLoginForm" onsubmit="return adminLogin(event)">
+                    <div class="form-group">
+                        <label for="adminUsername">Username</label>
+                        <input id="adminUsername" type="text" autocomplete="username" required
+                            placeholder="Enter username">
+                    </div>
+                    <div class="form-group" style="margin-top:14px;">
+                        <label for="adminPassword">Password</label>
+                        <input id="adminPassword" type="password" autocomplete="current-password" required
+                            placeholder="Enter password">
+                    </div>
+                    <div id="adminLoginStatus" class="status"></div>
+                    <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">
+                        Login to Admin
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- =========================================================
+     CAMERA MODAL
+========================================================= -->
+
+    <div class="modal" id="cameraModal">
+
+
+        <div class="modal-content" style="max-width:550px;">
+
+
+            <div class="modal-header">
+
+                <strong>
+                    Take Patient Photograph
+                </strong>
+
+
+                <button class="btn btn-secondary" onclick="closeCamera()">
+
+                    ✕
+
+                </button>
+
+            </div>
+
+
+            <div class="modal-body">
+
+
+                <video id="cameraVideo" autoplay playsinline style="
+        width:100%;
+        border-radius:10px;
+        background:#000;
+    ">
+                </video>
+
+
+                <canvas id="cameraCanvas" style="display:none;">
+                </canvas>
+
+
+                <button class="btn btn-primary" style="
+        width:100%;
+        margin-top:12px;
+    " onclick="capturePhoto()">
+
+                    📷 Capture Photo
+
+                </button>
+
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+    <!-- =========================================================
+     PRINT AREA
+========================================================= -->
+
+    <div id="printArea" class="print-preview-wrapper">
+
+
+        <div class="print-sheet" id="printSheet">
+
+
+            <!-- LETTERHEAD BACKGROUND -->
+
+            <div class="print-letterhead" id="printLetterhead"></div>
+
+
+            <!-- ACTUAL HTML CONTENT -->
+
+            <div class="print-content" id="printContent">
+
+
+                <div class="print-title">
+
+                    <h1>
+                        Patient Registration
+                    </h1>
+
+                    <p id="printCampName">
+                        Medical Camp
+                    </p>
+
+                    <p id="printCampDate">
+                        —
+                    </p>
+
+                </div>
+
+
+                <div class="print-meta" id="printDateTime"></div>
+
+                <div class="print-patient-card">
+
+
+                    <div class="print-section-title">
+
+                        Patient Information
+
+                    </div>
+
+
+                    <table class="print-table">
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                UHID
+                            </td>
+
+                            <td class="print-value" id="printPatientId">
+                            </td>
+
+
+                            <td rowspan="6" style="
+        width:30mm;
+        text-align:center;
+        vertical-align:middle;
+    ">
+
+                                <img id="printPhoto" class="patient-print-photo" alt="Patient Photo">
+
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Patient Name
+                            </td>
+
+                            <td class="print-value" id="printPatientName">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Age
+                            </td>
+
+                            <td class="print-value" id="printAge">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Gender
+                            </td>
+
+                            <td class="print-value" id="printGender">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Mobile
+                            </td>
+
+                            <td class="print-value" id="printMobile">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Blood Group
+                            </td>
+
+                            <td class="print-value" id="printBlood">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Yeshasvini
+                            </td>
+
+                            <td class="print-value" id="printYeshasvini">
+                            </td>
+
+                            <td></td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Doctor
+                            </td>
+
+                            <td class="print-value" id="printDoctor">
+                            </td>
+
+                            <td></td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Camp
+                            </td>
+
+                            <td class="print-value" id="printCamp">
+                            </td>
+
+                            <td></td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Address
+                            </td>
+
+                            <td class="print-value" colspan="2" id="printAddress">
+                            </td>
+
+                        </tr>
+
+
+                        <tr>
+
+                            <td class="print-label">
+                                Chief Complaint
+                            </td>
+
+                            <td class="print-value" colspan="2" id="printComplaint">
+                            </td>
+
+                        </tr>
+
+
+                    </table>
+
+
+                </div>
+
+
+                <div class="print-footer-area">
+
+
+                    <div>
+
+                        Patient / Guardian Signature
+
+                        <div class="signature">
+                            Signature
+                        </div>
+
+                    </div>
+
+
+                    <div>
+
+                        Doctor
+
+                        <div class="signature">
+                            Doctor Signature
+                        </div>
+
+                    </div>
+
+
+                    <div>
+
+                        Registration
+
+                        <div class="signature">
+                            Camp Registration
+                        </div>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        if (typeof pdfjsLib !== "undefined") {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+                "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        }
+    </script>
+    <script src="js/app.js"></script>
+
+
+</body>
+
+</html>

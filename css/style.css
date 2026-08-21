@@ -851,6 +851,21 @@ tr:hover td {
         print-color-adjust: exact !important;
     }
 
+    .print-letterhead img {
+        position: absolute !important;
+        inset: 0 !important;
+        z-index: 1 !important;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: fill !important;
+        border: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
     /* PATIENT CONTENT */
 
     .print-content {
@@ -1111,4 +1126,28 @@ td {
 
 #patientSearch {
     min-height:40px;
+}
+
+
+/* Reliable patient-photo loading state. */
+.patient-thumb-loading {
+    min-width: 42px;
+    min-height: 42px;
+    background: #f3f4f6;
+    object-fit: contain;
+}
+
+@media print {
+    .print-letterhead img {
+        content-visibility: visible !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+
+    .patient-print-photo {
+        visibility: visible !important;
+        opacity: 1 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
 }

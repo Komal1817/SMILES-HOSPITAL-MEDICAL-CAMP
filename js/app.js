@@ -73,18 +73,17 @@ function clearAdminSession() {
 
 function mergeCentralConfiguration(shared) {
 
+    const source = shared || {};
+
     return {
         ...DEFAULT_CONFIG,
-        ...config,
-        ...(shared || {}),
+        ...source,
         margins: {
             ...DEFAULT_CONFIG.margins,
-            ...(config?.margins || {}),
-            ...(shared?.margins || {})
+            ...(source.margins || {})
         },
         letterheadProfiles: {
-            ...(config?.letterheadProfiles || {}),
-            ...(shared?.letterheadProfiles || {})
+            ...(source.letterheadProfiles || {})
         }
     };
 }
@@ -134,7 +133,7 @@ async function loadCentralApplicationState(strict = false) {
             action: "getApplicationConfiguration"
         });
 
-        if (result.configured) {
+        if (result.configuration) {
             applyCentralApplicationState(result);
         }
 
@@ -168,9 +167,7 @@ async function saveCentralApplicationState() {
             camps,
             doctors,
             letterhead:
-                String(config.letterhead || "").startsWith("data:")
-                    ? ""
-                    : config.letterhead || ""
+                config.letterhead || ""
         }
     });
 
@@ -213,7 +210,7 @@ function startCentralSynchronization() {
 
     centralSyncTimer = setInterval(
         syncCentralApplicationState,
-        5000
+        2000
     );
 
     patientSyncTimer = setInterval(
@@ -482,10 +479,6 @@ async function loadSharedLetterheadConfiguration() {
                 result.error ||
                 "Failed to load shared letterhead configuration."
             );
-        }
-
-        if (result.configured === false) {
-            return config;
         }
 
         if (result.configuration) {
@@ -2288,14 +2281,16 @@ function deleteLetterhead(
 
 
     if (printLetterhead) {
+        printLetterhead.style.backgroundImage = "none";
+        printLetterhead.style.display = "none";
+    }
 
-        printLetterhead.style.backgroundImage =
-            "none";
+    const printLetterheadImage =
+        document.getElementById("printLetterheadImage");
 
-
-        printLetterhead.style.display =
-            "none";
-
+    if (printLetterheadImage) {
+        printLetterheadImage.removeAttribute("src");
+        printLetterheadImage.style.display = "none";
     }
 
 
@@ -2760,12 +2755,50 @@ function setPrintMarginVariables() {
 
 
 /* =========================================================
+   ADMIN LETTERHEAD LIVE PREVIEW
+========================================================= */
+
+function updateAdminLetterheadLivePreview() {
+
+    const background = document.getElementById("adminLetterheadPreviewBackground");
+    const page = document.getElementById("adminLetterheadPreviewPage");
+
+    if (!background || !page) return;
+
+    if (!config.letterhead) {
+        background.style.backgroundImage = "none";
+        page.style.display = "none";
+        return;
+    }
+
+    page.style.display = "block";
+    background.style.backgroundImage =
+        `url("${config.letterhead}")`;
+
+    if (config.letterheadType === "image") {
+        const image = new Image();
+
+        image.onload = function () {
+            if (image.naturalWidth > image.naturalHeight) {
+                page.style.aspectRatio = "210 / 148";
+            } else {
+                page.style.aspectRatio = "148 / 210";
+            }
+        };
+
+        image.src = config.letterhead;
+    }
+}
+
+
+/* =========================================================
    PRINT STYLES
 ========================================================= */
 
 function updatePrintStyles() {
 
     setPrintMarginVariables();
+    updateAdminLetterheadLivePreview();
 
     const content =
         document.getElementById(
@@ -2782,6 +2815,11 @@ function updatePrintStyles() {
     const letterhead =
         document.getElementById(
             "printLetterhead"
+        );
+
+    const letterheadImage =
+        document.getElementById(
+            "printLetterheadImage"
         );
 
 
@@ -2884,12 +2922,18 @@ function updatePrintStyles() {
 
     if (config.letterhead) {
 
-        letterhead.style.backgroundImage =
-            `url("${config.letterhead}")`;
+        letterhead.style.backgroundImage = "none";
+        letterhead.style.display = "block";
 
-
-        letterhead.style.display =
-            "block";
+        if (letterheadImage) {
+            letterheadImage.onload = function () {
+                letterheadImage.style.display = "block";
+            };
+            letterheadImage.onerror = function () {
+                letterheadImage.style.display = "none";
+            };
+            letterheadImage.src = config.letterhead;
+        }
 
 
         const img =
@@ -2917,12 +2961,13 @@ function updatePrintStyles() {
 
     else {
 
-        letterhead.style.backgroundImage =
-            "none";
+        letterhead.style.backgroundImage = "none";
+        letterhead.style.display = "none";
 
-
-        letterhead.style.display =
-            "none";
+        if (letterheadImage) {
+            letterheadImage.removeAttribute("src");
+            letterheadImage.style.display = "none";
+        }
 
 
         updatePrintDateTime();
@@ -3560,7 +3605,7 @@ document
 
                 renderPatients();
 
-                preparePrint(
+                void preparePrint(
                     patient
                 );
 
@@ -3605,7 +3650,86 @@ document
     );
 
 
-function preparePrint(patient) {
+const printFileDataCache = new Map();
+
+function extractDriveFileId(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+
+    const match = text.match(/[?&]id=([^&]+)/i) ||
+        text.match(/\/d\/([a-zA-Z0-9_-]+)/i);
+
+    if (match) {
+        return decodeURIComponent(match[1]);
+    }
+
+    /* A raw Drive file ID is normally a long URL-safe token. */
+    if (/^[a-zA-Z0-9_-]{20,}$/.test(text)) {
+        return text;
+    }
+
+    return "";
+}
+
+async function fetchStoredFileDataUrl(fileId) {
+    const id = extractDriveFileId(fileId);
+    if (!id) return "";
+
+    if (printFileDataCache.has(id)) {
+        return printFileDataCache.get(id);
+    }
+
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({
+            action: "getFileData",
+            fileId: id
+        })
+    });
+
+    const result = await response.json();
+
+    if (!result.ok || !result.dataUrl) {
+        throw new Error(
+            result.error || "Stored file could not be loaded for printing."
+        );
+    }
+
+    printFileDataCache.set(id, result.dataUrl);
+    return result.dataUrl;
+}
+
+function waitForImage(image, src) {
+    return new Promise(function(resolve, reject) {
+        if (!image) {
+            reject(new Error("Print image element was not found."));
+            return;
+        }
+
+        image.onload = function() {
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                resolve(image);
+            } else {
+                reject(new Error("Print image loaded with invalid dimensions."));
+            }
+        };
+
+        image.onerror = function() {
+            reject(new Error("Print image failed to load."));
+        };
+
+        image.src = src;
+
+        if (image.complete && image.naturalWidth > 0) {
+            resolve(image);
+        }
+    });
+}
+
+async function preparePrint(patient) {
 
     document.getElementById("printPatientId").textContent =
         patient.id || "";
@@ -3649,77 +3773,125 @@ function preparePrint(patient) {
             : "";
 
     const photo = document.getElementById("printPhoto");
+    const letterheadImage = document.getElementById("printLetterheadImage");
+    const printLetterhead = document.getElementById("printLetterhead");
 
-    /*
-     * ---------------------------------------------------------
-     * PATIENT PHOTO
-     * ---------------------------------------------------------
-     */
-
-    if (!photo) {
-        console.error("printPhoto element not found.");
-        return;
+    if (!photo || !letterheadImage || !printLetterhead) {
+        throw new Error("Required print elements are missing from index.html.");
     }
 
     photo.style.display = "none";
     photo.removeAttribute("src");
+    letterheadImage.style.display = "none";
+    letterheadImage.removeAttribute("src");
 
-    /*
-       Guard against window.print() firing twice: both the
-       photo.onload/onerror handlers AND the "already cached"
-       branch below can resolve for the same photo.
-    */
-    let printStarted = false;
-
-    function startPrinting() {
-
-        if (printStarted) return;
-        printStarted = true;
-
-        updatePrintDateTime();
-        updatePrintStyles();
-        fitPrintContentToAvailableArea();
-
-        setTimeout(function () {
-            window.print();
-        }, 150);
-    }
-
-    if (patient.photo) {
-
-        photo.onload = function () {
-
-            photo.style.display = "block";
-
-            startPrinting();
-        };
-
-        photo.onerror = function () {
-
-            console.error(
-                "Patient photo failed to load for printing:",
-                patient.photo
-            );
-
-            photo.style.display = "none";
-
-            startPrinting();
-        };
-
-        photo.src = patient.photo;
-
+    try {
         /*
-         * If browser already has the image cached,
-         * onload may have already completed.
+         * CRITICAL PRINT FIX:
+         * Never print directly from a Google Drive URL. Chrome can show
+         * the image in the normal page but fail to include it in the
+         * print snapshot because the remote image is still loading or
+         * is blocked by Drive permissions.
+         *
+         * Ask Apps Script for the actual stored file bytes and put those
+         * bytes into the print DOM as a data URL. Then wait for both
+         * images to finish loading before calling window.print().
          */
-        if (photo.complete && photo.naturalWidth > 0) {
-            photo.style.display = "block";
-            startPrinting();
+        let letterheadDataUrl = "";
+
+        const letterheadFileId = extractDriveFileId(
+            config.letterheadFileId || config.letterhead
+        );
+
+        if (letterheadFileId) {
+            try {
+                letterheadDataUrl = await fetchStoredFileDataUrl(
+                    letterheadFileId
+                );
+            } catch (fileError) {
+                console.warn(
+                    "Stored letterhead could not be read. Falling back to the configured URL/data URL.",
+                    fileError
+                );
+                if (/^data:image\//i.test(String(config.letterhead || ""))) {
+                    letterheadDataUrl = config.letterhead;
+                }
+            }
+        } else if (config.letterhead) {
+            letterheadDataUrl = config.letterhead;
         }
 
-    } else {
+        let photoDataUrl = "";
 
-        startPrinting();
+        const patientPhotoFileId = extractDriveFileId(
+            patient.photoFileId || patient.photo
+        );
+
+        if (patientPhotoFileId) {
+            try {
+                photoDataUrl = await fetchStoredFileDataUrl(
+                    patientPhotoFileId
+                );
+            } catch (fileError) {
+                console.warn(
+                    "Stored patient photo could not be read. Falling back to the configured photo URL.",
+                    fileError
+                );
+                if (/^data:image\//i.test(String(patient.photo || ""))) {
+                    photoDataUrl = patient.photo;
+                }
+            }
+        } else if (patient.photo) {
+            photoDataUrl = patient.photo;
+        }
+
+        if (letterheadDataUrl) {
+            await waitForImage(letterheadImage, letterheadDataUrl);
+            letterheadImage.style.display = "block";
+            printLetterhead.style.display = "block";
+            printLetterhead.style.backgroundImage = "none";
+
+            /*
+             * Do NOT call updatePrintStyles() here. That function reads
+             * config.letterhead and would replace our verified data URL
+             * with the remote Drive URL again. The print sheet is already
+             * sized before preparePrint() starts.
+             */
+            if (letterheadImage.naturalWidth > letterheadImage.naturalHeight) {
+                document.documentElement.style.setProperty("--print-width", "210mm");
+                document.documentElement.style.setProperty("--print-height", "148mm");
+            } else {
+                document.documentElement.style.setProperty("--print-width", "148mm");
+                document.documentElement.style.setProperty("--print-height", "210mm");
+            }
+        } else {
+            printLetterhead.style.display = "none";
+        }
+
+        if (photoDataUrl) {
+            await waitForImage(photo, photoDataUrl);
+            photo.style.display = "block";
+        }
+
+        updatePrintDateTime();
+        fitPrintContentToAvailableArea();
+
+        /* Give the browser one paint cycle after all images are decoded. */
+        await new Promise(function(resolve) {
+            requestAnimationFrame(function() {
+                requestAnimationFrame(resolve);
+            });
+        });
+
+        window.print();
+    } catch (error) {
+        console.error("Print preparation failed:", error);
+
+        /* Do not silently print an empty letterhead/photo. */
+        alert(
+            "The print sheet could not load the saved letterhead or patient photo.\n\n" +
+            (error && error.message ? error.message : error)
+        );
     }
 }
 
@@ -3745,7 +3917,7 @@ function printExistingPatient(id) {
         `${patient.name}_${patient.id}`;
 
 
-    preparePrint(
+    void preparePrint(
         patient
     );
 
@@ -3755,6 +3927,25 @@ function printExistingPatient(id) {
 /* =========================================================
    PATIENT TABLE
 ========================================================= */
+
+async function hydratePatientTablePhotos() {
+    const images = document.querySelectorAll("img[data-photo-file-id]");
+
+    await Promise.all(Array.from(images).map(async function(image) {
+        const fileId = image.getAttribute("data-photo-file-id");
+        if (!fileId) return;
+
+        try {
+            const dataUrl = await fetchStoredFileDataUrl(fileId);
+            image.src = dataUrl;
+            image.classList.remove("patient-thumb-loading");
+        } catch (error) {
+            console.error("Patient table photo failed to load:", fileId, error);
+            image.alt = "Photo unavailable";
+            image.classList.remove("patient-thumb-loading");
+        }
+    }));
+}
 
 function renderPatients() {
 
@@ -3829,9 +4020,11 @@ function renderPatients() {
 
             row.innerHTML = `
                 <td>
-                    ${patient.photo
-                        ? `<img src="${patient.photo}" class="patient-thumb" alt="Photo">`
-                        : "—"}
+                    ${patient.photoFileId
+                        ? `<img src="" data-photo-file-id="${escapeHtml(patient.photoFileId)}" class="patient-thumb patient-thumb-loading" alt="Photo">`
+                        : (patient.photo
+                            ? `<img src="${escapeHtml(patient.photo)}" class="patient-thumb" alt="Photo">`
+                            : "—")}
                 </td>
 
                 <td>${escapeHtml(patient.id)}</td>
@@ -3851,6 +4044,8 @@ function renderPatients() {
 
             tbody.appendChild(row);
         });
+
+    void hydratePatientTablePhotos();
 
     document
         .getElementById("patientCount")
@@ -4490,5 +4685,37 @@ async function initialize() {
 
 }
 
+
+/* =========================================================
+   AUTO-CAPITALIZE TABLET FORM TEXT
+========================================================= */
+
+function enableTabletAutoCapitalization() {
+
+    const form = document.getElementById("patientForm");
+    if (!form) return;
+
+    const fields = form.querySelectorAll(
+        'input[type="text"], textarea'
+    );
+
+    fields.forEach(function (field) {
+
+        field.addEventListener("input", function () {
+            const start = field.selectionStart;
+            const end = field.selectionEnd;
+
+            field.value = field.value.toUpperCase();
+
+            try {
+                field.setSelectionRange(start, end);
+            } catch (e) {}
+        });
+
+        field.style.textTransform = "uppercase";
+    });
+}
+
+enableTabletAutoCapitalization();
 
 initialize();

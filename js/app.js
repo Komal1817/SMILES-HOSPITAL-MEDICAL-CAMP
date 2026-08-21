@@ -1,5 +1,219 @@
 const GOOGLE_SCRIPT_URL ="https://script.google.com/macros/s/AKfycbyEViQDbOFTdA9UIJLPFoNxf0WdX1NIjllmYqwQAGPp8HEGZisiuXq1oSvsF43PwG0DTQ/exec"
 
+
+/* =========================================================
+   CENTRAL MULTI-DEVICE STATE
+   Google Apps Script + Sheets are the source of truth.
+   localStorage is only a fast offline cache.
+========================================================= */
+
+let adminToken = sessionStorage.getItem("smilesAdminToken") || "";
+let sharedStateVersion = "";
+let patientsStateVersion = "";
+let sharedStateInitialized = false;
+let sharedStateSyncTimer = null;
+let sharedStateDirty = false;
+let sharedStateSyncInFlight = false;
+
+async function callGoogleScript(action, extra = {}) {
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action, ...extra })
+    });
+
+    const result = await response.json();
+    if (!result.ok) {
+        throw new Error(result.error || `Google Apps Script action failed: ${action}`);
+    }
+    return result;
+}
+
+async function loginAdminOnServer(username, password) {
+    const result = await callGoogleScript("loginAdmin", { username, password });
+    adminToken = result.token || "";
+    if (!adminToken) throw new Error("Admin session token was not returned.");
+    sessionStorage.setItem("smilesAdminToken", adminToken);
+    isAdmin = true;
+    return result;
+}
+
+function clearAdminSession() {
+    adminToken = "";
+    isAdmin = false;
+    sessionStorage.removeItem("smilesAdminToken");
+}
+
+async function loadSharedState(strict = false) {
+    try {
+        const result = await callGoogleScript("getState");
+        const state = result.state || {};
+
+        sharedStateInitialized = state.initialized !== false;
+        if (state.initialized === false) {
+            /* First deployment: keep the current device's existing setup as a migration source. */
+            return state;
+        }
+
+        if (state.version && state.version === sharedStateVersion) {
+            return state;
+        }
+
+        camps = Array.isArray(state.camps) ? state.camps : [];
+        doctors = Array.isArray(state.doctors) ? state.doctors : [];
+        config = {
+            ...DEFAULT_CONFIG,
+            ...(state.config || {}),
+            margins: {
+                ...DEFAULT_CONFIG.margins,
+                ...((state.config || {}).margins || {})
+            },
+            letterheadProfiles: {
+                ...((state.config || {}).letterheadProfiles || {})
+            }
+        };
+
+        sharedStateVersion = String(state.version || "");
+        patientsStateVersion = String(state.patientsVersion || patientsStateVersion || "");
+        sharedStateDirty = false;
+
+        persistAll();
+        renderAdminLists();
+        updateApplication();
+        updatePrintStyles();
+        loadLetterheadSettingsToAdmin();
+        updateLetterheadMarginPreview();
+        renderPatients();
+
+        const name = document.getElementById("letterheadFileName");
+        if (name) name.textContent = config.letterheadFileName || "Letterhead";
+
+        return state;
+    } catch (error) {
+        console.warn("Shared state load failed:", error);
+        if (strict) throw error;
+        return null;
+    }
+}
+
+async function saveSharedState(options = {}) {
+    if (!isAdmin || !adminToken) {
+        throw new Error("Admin access is required to save shared configuration.");
+    }
+
+    const result = await callGoogleScript("saveState", {
+        token: adminToken,
+        camps,
+        doctors,
+        config: {
+            ...config,
+            /* Do not send a huge cached data URL when the current letterhead
+               is already stored centrally. The server preserves its file. */
+            letterhead: options.letterheadData || "",
+            deleteLetterhead: Boolean(options.deleteLetterhead),
+            activeCampId: config.activeCampId || "",
+            margins: config.margins || DEFAULT_CONFIG.margins,
+            letterheadProfiles: config.letterheadProfiles || {}
+        }
+    });
+
+    if (result.state) {
+        sharedStateVersion = String(result.state.version || "");
+        patientsStateVersion = String(result.state.patientsVersion || patientsStateVersion || "");
+        camps = result.state.camps || camps;
+        doctors = result.state.doctors || doctors;
+        config = {
+            ...DEFAULT_CONFIG,
+            ...(result.state.config || config),
+            margins: {
+                ...DEFAULT_CONFIG.margins,
+                ...((result.state.config || config).margins || {})
+            },
+            letterheadProfiles: {
+                ...((result.state.config || config).letterheadProfiles || {})
+            }
+        };
+    }
+
+    sharedStateDirty = false;
+    persistAll();
+    renderAdminLists();
+    updateApplication();
+    updatePrintStyles();
+    loadLetterheadSettingsToAdmin();
+    updateLetterheadMarginPreview();
+    return result;
+}
+
+async function bootstrapSharedStateFromLocal() {
+    if (!isAdmin || !adminToken || sharedStateInitialized) return;
+    try {
+        const result = await callGoogleScript("saveState", {
+            token: adminToken,
+            camps,
+            doctors,
+            config: {
+                ...config,
+                letterhead: (config.letterhead || "").startsWith("data:image/") ? config.letterhead : "",
+                margins: config.margins || DEFAULT_CONFIG.margins,
+                letterheadProfiles: config.letterheadProfiles || {}
+            }
+        });
+        sharedStateInitialized = true;
+        sharedStateVersion = String(result.state?.version || "");
+        patientsStateVersion = String(result.state?.patientsVersion || patientsStateVersion || "");
+        if (result.state) {
+            camps = result.state.camps || camps;
+            doctors = result.state.doctors || doctors;
+            config = {
+                ...DEFAULT_CONFIG,
+                ...(result.state.config || config),
+                margins: { ...DEFAULT_CONFIG.margins, ...((result.state.config || config).margins || {}) },
+                letterheadProfiles: { ...((result.state.config || config).letterheadProfiles || {}) }
+            };
+        }
+        persistAll(); renderAdminLists(); updateApplication(); updatePrintStyles();
+        loadLetterheadSettingsToAdmin(); updateLetterheadMarginPreview();
+        showStatus("adminStatus", "Existing setup migrated to central storage. All tablets can now share it.", "success");
+    } catch (error) {
+        alert("Unable to initialize central configuration.\n\n" + error.message);
+    }
+}
+
+async function syncSharedState() {
+    if (sharedStateSyncInFlight || sharedStateDirty) return;
+    sharedStateSyncInFlight = true;
+    try {
+        const result = await callGoogleScript("getState");
+        const state = result.state || {};
+        const version = String(state.version || "");
+        const patientVersion = String(state.patientsVersion || "");
+
+        if (version && version !== sharedStateVersion) {
+            await loadSharedState(false);
+        }
+
+        if (patientVersion && patientVersion !== patientsStateVersion) {
+            await loadPatientsFromGoogleSheets(false);
+        }
+    } catch (error) {
+        console.warn("Background shared-state sync failed:", error);
+    } finally {
+        sharedStateSyncInFlight = false;
+    }
+}
+
+function startSharedStateSync() {
+    if (sharedStateSyncTimer) clearInterval(sharedStateSyncTimer);
+    sharedStateSyncTimer = setInterval(syncSharedState, 5000);
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            syncSharedState();
+            loadPatientsFromGoogleSheets(false);
+        }
+    });
+}
+
 /* =========================================================
    GOOGLE SHEETS
 ========================================================= */
@@ -23,6 +237,9 @@ async function savePatientToGoogleSheets(patient) {
 
                         action:
                             "savePatient",
+
+                        token:
+                            editingPatientId ? adminToken : "",
 
                         patient:
                             patient
@@ -116,6 +333,7 @@ async function loadPatientsFromGoogleSheets(strict = false) {
         patients =
             result.patients || [];
 
+        patientsStateVersion = String(result.version || "");
 
         persistAll();
 
@@ -166,6 +384,7 @@ async function deletePatientFromGoogleSheets(patientId) {
             },
             body: JSON.stringify({
                 action: "deletePatient",
+                token: adminToken,
                 patientId: patientId
             })
         }
@@ -222,135 +441,11 @@ async function getNextUHIDFromGoogleSheets(camp) {
 ========================================================= */
 
 async function loadSharedLetterheadConfiguration() {
-
-    try {
-
-        const response = await fetch(
-            GOOGLE_SCRIPT_URL,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "text/plain;charset=utf-8"
-                },
-                body: JSON.stringify({
-                    action: "getLetterheadConfiguration"
-                })
-            }
-        );
-
-        const result = await response.json();
-
-        if (!result.ok) {
-            throw new Error(
-                result.error ||
-                "Failed to load shared letterhead configuration."
-            );
-        }
-
-        if (result.configuration) {
-            const shared = result.configuration;
-
-            config = {
-                ...DEFAULT_CONFIG,
-                ...config,
-                ...shared,
-                margins: {
-                    ...DEFAULT_CONFIG.margins,
-                    ...(config.margins || {}),
-                    ...(shared.margins || {})
-                },
-                letterheadProfiles: {
-                    ...(config.letterheadProfiles || {}),
-                    ...(shared.letterheadProfiles || {})
-                }
-            };
-
-            persistAll();
-            updateApplication();
-            updatePrintStyles();
-            loadLetterheadSettingsToAdmin();
-            updateLetterheadMarginPreview();
-
-            const name =
-                document.getElementById("letterheadFileName");
-
-            if (name) {
-                name.textContent =
-                    config.letterheadFileName || "Letterhead";
-            }
-        }
-
-        console.log(
-            "Shared letterhead configuration loaded."
-        );
-
-        return config;
-
-    }
-    catch (error) {
-
-        console.warn(
-            "Shared letterhead configuration unavailable. Using local cache:",
-            error
-        );
-
-        return config;
-    }
+    return loadSharedState(false);
 }
 
-
-async function saveSharedLetterheadConfiguration() {
-
-    const response = await fetch(
-        GOOGLE_SCRIPT_URL,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type":
-                    "text/plain;charset=utf-8"
-            },
-            body: JSON.stringify({
-                action: "saveLetterheadConfiguration",
-                configuration: {
-                    letterhead: config.letterhead || "",
-                    letterheadType: config.letterheadType || "",
-                    letterheadFileName: config.letterheadFileName || "",
-                    letterheadProfiles: config.letterheadProfiles || {},
-                    margins: config.margins || DEFAULT_CONFIG.margins
-                }
-            })
-        }
-    );
-
-    const result = await response.json();
-
-    if (!result.ok) {
-        throw new Error(
-            result.error ||
-            "Failed to save shared letterhead configuration."
-        );
-    }
-
-    if (result.configuration) {
-        config = {
-            ...config,
-            ...result.configuration,
-            margins: {
-                ...DEFAULT_CONFIG.margins,
-                ...(result.configuration.margins || {})
-            },
-            letterheadProfiles: {
-                ...(result.configuration.letterheadProfiles || {})
-            }
-        };
-    }
-
-    persistAll();
-    updateApplication();
-    updatePrintStyles();
-
-    return result;
+async function saveSharedLetterheadConfiguration(options = {}) {
+    return saveSharedState(options);
 }
 
 
@@ -672,69 +767,32 @@ function persistAll() {
    CAMP MANAGEMENT
 ========================================================= */
 
-function addCamp() {
-
-    const input =
-        document.getElementById(
-            "newCampName"
-        );
-
-
-    const name =
-        input.value.trim();
-
-
-    if (!name) {
-
-        alert(
-            "Please enter a camp name."
-        );
-
-        return;
-
-    }
-
+async function addCamp() {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const input = document.getElementById("newCampName");
+    const name = input.value.trim();
+    if (!name) { alert("Please enter a camp name."); return; }
 
     const camp = {
-
-        id:
-            createId("CAMP"),
-
+        id: createId("CAMP"),
         name,
-
-        date:
-            new Date()
-                .toISOString()
-                .split("T")[0]
-
+        date: new Date().toISOString().split("T")[0]
     };
 
-
-    camps.push(
-        camp
-    );
-
-
-    config.activeCampId =
-        camp.id;
-
-
+    camps.push(camp);
+    config.activeCampId = camp.id;
     input.value = "";
-
-
-    persistAll();
-
+    sharedStateDirty = true;
     renderAdminLists();
-
     updateApplication();
 
-
-    showStatus(
-        "adminStatus",
-        "Camp added successfully.",
-        "success"
-    );
-
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Camp added and synchronized to all tablets.", "success");
+    } catch (error) {
+        alert("Camp could not be saved centrally.\n\n" + error.message);
+        await loadSharedState(false);
+    }
 }
 
 
@@ -742,79 +800,33 @@ function addCamp() {
    DELETE CAMP
 ========================================================= */
 
-function deleteCamp(id) {
-
-    if (camps.length <= 1) {
-
-        alert(
-            "At least one camp must remain."
-        );
-
-        return;
-
-    }
-
-
-    const camp =
-        camps.find(
-            c =>
-                c.id === id
-        );
-
-
+async function deleteCamp(id) {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    if (camps.length <= 1) { alert("At least one camp must remain."); return; }
+    const camp = camps.find(c => c.id === id);
     if (!camp) return;
 
+    const hasPatients = patients.some(p => p.campId === id);
+    if (hasPatients && !confirm("Patients are already registered for this camp. Delete the camp configuration anyway?")) return;
 
-    const hasPatients =
-        patients.some(
-            p =>
-                p.campId === id
-        );
-
-
-    if (hasPatients) {
-
-        const confirmed =
-            confirm(
-                "Patients are already registered for this camp. Delete the camp configuration anyway?"
-            );
-
-
-        if (!confirmed) return;
-
-    }
-
-
-    camps =
-        camps.filter(
-            c =>
-                c.id !== id
-        );
-
-
-    doctors =
-        doctors.filter(
-            d =>
-                d.campId !== id
-        );
-
-
-    if (
-        config.activeCampId === id
-    ) {
-
-        config.activeCampId =
-            camps[0].id;
-
-    }
-
-
-    persistAll();
-
+    const previous = JSON.stringify({ camps, doctors, config });
+    camps = camps.filter(c => c.id !== id);
+    doctors = doctors.filter(d => d.campId !== id);
+    if (config.activeCampId === id) config.activeCampId = camps[0].id;
+    sharedStateDirty = true;
     renderAdminLists();
-
     updateApplication();
 
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Camp deleted and synchronized to all tablets.", "success");
+    } catch (error) {
+        const old = JSON.parse(previous);
+        camps = old.camps; doctors = old.doctors; config = old.config;
+        sharedStateDirty = false;
+        renderAdminLists(); updateApplication();
+        alert("Camp could not be deleted centrally.\n\n" + error.message);
+    }
 }
 
 
@@ -822,24 +834,24 @@ function deleteCamp(id) {
    ACTIVE CAMP SELECT
 ========================================================= */
 
-function changeActiveCamp() {
-
-    const select =
-        document.getElementById(
-            "activeCampSelect"
-        );
-
-
-    config.activeCampId =
-        select.value;
-
-
-    persistAll();
-
+async function changeActiveCamp() {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const select = document.getElementById("activeCampSelect");
+    const previous = config.activeCampId;
+    config.activeCampId = select.value;
+    sharedStateDirty = true;
     updateApplication();
-
     renderAdminLists();
 
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Active camp changed. All tablets will sync automatically.", "success");
+    } catch (error) {
+        config.activeCampId = previous;
+        sharedStateDirty = false;
+        renderAdminLists(); updateApplication();
+        alert("Active camp could not be synchronized.\n\n" + error.message);
+    }
 }
 
 
@@ -847,79 +859,25 @@ function changeActiveCamp() {
    DOCTOR MANAGEMENT
 ========================================================= */
 
-function addDoctor() {
+async function addDoctor() {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const name = document.getElementById("newDoctorName").value.trim();
+    const campId = document.getElementById("newDoctorCamp").value;
+    if (!name) { alert("Please enter doctor name."); return; }
+    if (!campId) { alert("Please select a camp."); return; }
 
-    const name =
-        document
-            .getElementById(
-                "newDoctorName"
-            )
-            .value
-            .trim();
+    doctors.push({ id: createId("DR"), name, campId });
+    document.getElementById("newDoctorName").value = "";
+    sharedStateDirty = true;
+    renderAdminLists(); updateDoctorDropdown();
 
-
-    const campId =
-        document
-            .getElementById(
-                "newDoctorCamp"
-            )
-            .value;
-
-
-    if (!name) {
-
-        alert(
-            "Please enter doctor name."
-        );
-
-        return;
-
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Doctor added and synchronized to all tablets.", "success");
+    } catch (error) {
+        await loadSharedState(false);
+        alert("Doctor could not be saved centrally.\n\n" + error.message);
     }
-
-
-    if (!campId) {
-
-        alert(
-            "Please select a camp."
-        );
-
-        return;
-
-    }
-
-
-    doctors.push({
-
-        id:
-            createId("DR"),
-
-        name,
-
-        campId
-
-    });
-
-
-    document
-        .getElementById(
-            "newDoctorName"
-        )
-        .value = "";
-
-
-    persistAll();
-
-    renderAdminLists();
-
-    updateDoctorDropdown();
-
-
-    showStatus(
-        "adminStatus",
-        "Doctor added successfully.",
-        "success"
-    );
-
 }
 
 
@@ -927,21 +885,20 @@ function addDoctor() {
    DELETE DOCTOR
 ========================================================= */
 
-function deleteDoctor(id) {
-
-    doctors =
-        doctors.filter(
-            d =>
-                d.id !== id
-        );
-
-
-    persistAll();
-
-    renderAdminLists();
-
-    updateDoctorDropdown();
-
+async function deleteDoctor(id) {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const previous = JSON.stringify(doctors);
+    doctors = doctors.filter(d => d.id !== id);
+    sharedStateDirty = true;
+    renderAdminLists(); updateDoctorDropdown();
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Doctor deleted and synchronized to all tablets.", "success");
+    } catch (error) {
+        doctors = JSON.parse(previous); sharedStateDirty = false;
+        renderAdminLists(); updateDoctorDropdown();
+        alert("Doctor could not be deleted centrally.\n\n" + error.message);
+    }
 }
 
 
@@ -949,83 +906,48 @@ function deleteDoctor(id) {
    EDIT CAMP / DOCTOR
 ========================================================= */
 
-function editCamp(id) {
-
-    const camp = camps.find(c => c.id === id);
-    if (!camp) return;
-
-    const name = prompt(
-        "Edit camp name:",
-        camp.name
-    );
-
-    if (name === null) return;
-
-    const cleanName = name.trim();
-
-    if (!cleanName) {
-        alert("Camp name cannot be empty.");
-        return;
-    }
-
+async function editCamp(id) {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const camp = camps.find(c => c.id === id); if (!camp) return;
+    const name = prompt("Edit camp name:", camp.name); if (name === null) return;
+    const cleanName = name.trim(); if (!cleanName) { alert("Camp name cannot be empty."); return; }
+    const oldName = camp.name;
     camp.name = cleanName;
-
-    persistAll();
-    renderAdminLists();
-    updateApplication();
-
-    showStatus(
-        "adminStatus",
-        "Camp updated successfully.",
-        "success"
-    );
+    sharedStateDirty = true;
+    renderAdminLists(); updateApplication();
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Camp updated and synchronized to all tablets.", "success");
+    } catch (error) {
+        camp.name = oldName; sharedStateDirty = false;
+        renderAdminLists(); updateApplication();
+        alert("Camp could not be updated centrally.\n\n" + error.message);
+    }
 }
 
 
-function editDoctor(id) {
-
-    const doctor = doctors.find(d => d.id === id);
-    if (!doctor) return;
-
-    const name = prompt(
-        "Edit doctor name:",
-        doctor.name
-    );
-
-    if (name === null) return;
-
-    const cleanName = name.trim();
-
-    if (!cleanName) {
-        alert("Doctor name cannot be empty.");
-        return;
-    }
-
+async function editDoctor(id) {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const doctor = doctors.find(d => d.id === id); if (!doctor) return;
+    const name = prompt("Edit doctor name:", doctor.name); if (name === null) return;
+    const cleanName = name.trim(); if (!cleanName) { alert("Doctor name cannot be empty."); return; }
+    const campName = prompt("Enter the camp name for this doctor:", camps.find(c => c.id === doctor.campId)?.name || "");
+    const old = { name: doctor.name, campId: doctor.campId };
     doctor.name = cleanName;
-
-    const campName = prompt(
-        "Enter the camp name for this doctor (leave unchanged if not needed):",
-        camps.find(c => c.id === doctor.campId)?.name || ""
-    );
-
     if (campName !== null && campName.trim()) {
-        const camp = camps.find(
-            c => c.name.toLowerCase() === campName.trim().toLowerCase()
-        );
-        if (camp) {
-            doctor.campId = camp.id;
-        }
+        const camp = camps.find(c => c.name.toLowerCase() === campName.trim().toLowerCase());
+        if (camp) doctor.campId = camp.id;
     }
-
-    persistAll();
-    renderAdminLists();
-    updateDoctorDropdown();
-
-    showStatus(
-        "adminStatus",
-        "Doctor updated successfully.",
-        "success"
-    );
+    sharedStateDirty = true;
+    renderAdminLists(); updateDoctorDropdown();
+    try {
+        await saveSharedState();
+        showStatus("adminStatus", "Doctor updated and synchronized to all tablets.", "success");
+    } catch (error) {
+        doctor.name = old.name; doctor.campId = old.campId; sharedStateDirty = false;
+        renderAdminLists(); updateDoctorDropdown();
+        alert("Doctor could not be updated centrally.\n\n" + error.message);
+    }
 }
 
 
@@ -1509,42 +1431,11 @@ function updateLetterheadMarginPreview() {
 ========================================================= */
 
 async function saveConfiguration() {
-
-    const marginTop =
-        Number(
-            document
-                .getElementById(
-                    "marginTop"
-                )
-                .value
-        );
-
-    const marginRight =
-        Number(
-            document
-                .getElementById(
-                    "marginRight"
-                )
-                .value
-        );
-
-    const marginBottom =
-        Number(
-            document
-                .getElementById(
-                    "marginBottom"
-                )
-                .value
-        );
-
-    const marginLeft =
-        Number(
-            document
-                .getElementById(
-                    "marginLeft"
-                )
-                .value
-        );
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    const marginTop = Number(document.getElementById("marginTop").value);
+    const marginRight = Number(document.getElementById("marginRight").value);
+    const marginBottom = Number(document.getElementById("marginBottom").value);
+    const marginLeft = Number(document.getElementById("marginLeft").value);
 
     saveCurrentLetterheadSettings({
         top: validNumber(marginTop, 50),
@@ -1553,43 +1444,22 @@ async function saveConfiguration() {
         left: validNumber(marginLeft, 15)
     });
 
-    /* Save locally first so the current device remains responsive. */
-    persistAll();
+    sharedStateDirty = true;
     updateApplication();
     loadLetterheadSettingsToAdmin();
     updateLetterheadMarginPreview();
-
-    showStatus(
-        "adminStatus",
-        "Saving letterhead to shared storage...",
-        "success"
-    );
+    showStatus("adminStatus", "Saving central configuration...", "success");
 
     try {
-
-        await saveSharedLetterheadConfiguration();
-
-        showStatus(
-            "adminStatus",
-            `Saved for ${config.letterheadFileName || "current letterhead"}. All tablets will use this configuration after refresh.`,
-            "success"
-        );
-
+        await saveSharedState({
+            letterheadData: (config.letterhead || "").startsWith("data:image/") ? config.letterhead : ""
+        });
+        showStatus("adminStatus", "Saved centrally. All tablets now use this configuration.", "success");
+    } catch (error) {
+        sharedStateDirty = false;
+        await loadSharedState(false);
+        showStatus("adminStatus", "Central save failed: " + error.message, "error");
     }
-    catch (error) {
-
-        console.error(
-            "Shared letterhead save failed:",
-            error
-        );
-
-        showStatus(
-            "adminStatus",
-            "Local copy saved, but shared letterhead could not be saved. Check the connection and try again.",
-            "error"
-        );
-    }
-
 }
 
 
@@ -1685,6 +1555,8 @@ function handleLetterhead(event) {
 
                 config.letterheadFileName =
                     file.name;
+
+                sharedStateDirty = true;
 
                 const settings = getCurrentLetterheadSettings();
                 config.margins = { ...settings };
@@ -1877,6 +1749,8 @@ function handleLetterhead(event) {
                 config.letterheadFileName =
                     file.name;
 
+                sharedStateDirty = true;
+
                 const settings = getCurrentLetterheadSettings();
                 config.margins = { ...settings };
                 loadLetterheadSettingsToAdmin();
@@ -1951,147 +1825,34 @@ function handleLetterhead(event) {
 }
 
 
-function deleteLetterhead(
-    showMessage = true
-) {
+async function deleteLetterhead(showMessage = true) {
+    if (!isAdmin || !adminToken) { alert("Admin access is required."); return; }
+    if (showMessage && !confirm("Are you sure you want to delete the current letterhead?")) return;
 
-    if (
-        showMessage &&
-        !confirm(
-            "Are you sure you want to delete the current letterhead?"
-        )
-    ) return;
+    config.letterhead = "";
+    config.letterheadType = "";
+    config.letterheadFileName = "";
+    config.letterheadFileId = "";
+    config.letterheadProfiles = {};
+    config.margins = { ...DEFAULT_CONFIG.margins };
 
+    const input = document.getElementById("letterheadInput"); if (input) input.value = "";
+    const image = document.getElementById("letterheadPreview"); if (image) { image.src = ""; image.style.display = "none"; }
+    const pdf = document.getElementById("letterheadPdfPreview"); if (pdf) { pdf.src = ""; pdf.style.display = "none"; }
+    const container = document.getElementById("letterheadPreviewContainer"); if (container) container.style.display = "none";
+    const name = document.getElementById("letterheadFileName"); if (name) name.textContent = "Letterhead";
 
-    config.letterhead =
-        "";
+    sharedStateDirty = true;
+    updatePrintStyles(); updateLetterheadMarginPreview();
 
-    config.letterheadType =
-        "";
-
-    config.letterheadFileName =
-        "";
-
-    config.margins = {
-        ...DEFAULT_CONFIG.margins
-    };
-
-
-    const input =
-        document.getElementById(
-            "letterheadInput"
-        );
-
-
-    if (input)
-        input.value =
-            "";
-
-
-    const image =
-        document.getElementById(
-            "letterheadPreview"
-        );
-
-
-    if (image) {
-
-        image.src =
-            "";
-
-        image.style.display =
-            "none";
-
+    try {
+        await saveSharedState({ deleteLetterhead: true });
+        if (showMessage) showStatus("adminStatus", "Letterhead deleted centrally. All tablets will update.", "success");
+    } catch (error) {
+        sharedStateDirty = false;
+        await loadSharedState(false);
+        alert("Letterhead could not be deleted centrally.\n\n" + error.message);
     }
-
-
-    const pdf =
-        document.getElementById(
-            "letterheadPdfPreview"
-        );
-
-
-    if (pdf) {
-
-        pdf.src =
-            "";
-
-        pdf.style.display =
-            "none";
-
-    }
-
-
-    const container =
-        document.getElementById(
-            "letterheadPreviewContainer"
-        );
-
-
-    if (container)
-        container.style.display =
-            "none";
-
-
-    const name =
-        document.getElementById(
-            "letterheadFileName"
-        );
-
-
-    if (name)
-        name.textContent =
-            "Letterhead";
-
-
-    const printLetterhead =
-        document.getElementById(
-            "printLetterhead"
-        );
-
-
-    const printPdf =
-        document.getElementById(
-            "printLetterheadPdf"
-        );
-
-
-    if (printLetterhead) {
-
-        printLetterhead.style.backgroundImage =
-            "none";
-
-
-        printLetterhead.style.display =
-            "none";
-
-    }
-
-
-    if (printPdf) {
-
-        printPdf.src =
-            "";
-
-        printPdf.style.display =
-            "none";
-
-    }
-
-
-    persistAll();
-
-
-    if (showMessage) {
-
-        showStatus(
-            "adminStatus",
-            "Letterhead deleted successfully.",
-            "success"
-        );
-
-    }
-
 }
 
 
@@ -2246,98 +2007,31 @@ function closeAdmin() {
 }
 
 
-function adminLogin(event) {
-
+async function adminLogin(event) {
     event.preventDefault();
+    const username = document.getElementById("adminUsername").value.trim();
+    const password = document.getElementById("adminPassword").value;
+    const status = document.getElementById("adminLoginStatus");
+    status.className = "status";
+    status.textContent = "Checking admin credentials...";
 
-
-    const username =
-        document
-            .getElementById(
-                "adminUsername"
-            )
-            .value
-            .trim();
-
-
-    const password =
-        document
-            .getElementById(
-                "adminPassword"
-            )
-            .value;
-
-
-    const status =
-        document.getElementById(
-            "adminLoginStatus"
-        );
-
-
-    if (
-        username === "admin" &&
-        password === "admin123"
-    ) {
-
-        isAdmin = true;
-
-        status.className =
-            "status success";
-
-
-        status.textContent =
-            "Login successful.";
-
-
-        setTimeout(
-            function () {
-
-                document
-                    .getElementById(
-                        "adminLoginModal"
-                    )
-                    .classList.remove(
-                        "active"
-                    );
-
-
-                document
-                    .getElementById(
-                        "adminLoginForm"
-                    )
-                    .reset();
-
-
-                status.className =
-                    "status";
-
-
-                status.textContent =
-                    "";
-
-
-                openAdminPanel();
-
-            },
-            250
-        );
-
-
-        return false;
-
+    try {
+        await loginAdminOnServer(username, password);
+        status.className = "status success";
+        status.textContent = "Login successful.";
+        setTimeout(() => {
+            document.getElementById("adminLoginModal").classList.remove("active");
+            document.getElementById("adminLoginForm").reset();
+            status.className = "status";
+            status.textContent = "";
+            openAdminPanel();
+        }, 250);
+    } catch (error) {
+        clearAdminSession();
+        status.className = "status error";
+        status.textContent = error.message || "Invalid username or password.";
     }
-
-
-    status.className =
-        "status error";
-
-
-    status.textContent =
-        "Invalid username or password.";
-
-
     return false;
-
 }
 
 
@@ -4137,47 +3831,24 @@ function showStatus(
 
 async function initialize() {
 
+    /* Local data is only a visual cache while the central state loads. */
     initializeDefaultCamp();
-
-
-    persistAll();
-
-
     renderAdminLists();
-
-
     updateApplication();
-
-
-    /*
-       Show the local cache immediately.
-       Google Sheets will replace it with the shared records.
-    */
-
     renderPatients();
-
-
     updatePrintStyles();
     loadLetterheadSettingsToAdmin();
     updateLetterheadMarginPreview();
 
-
     try {
-
-        await loadSharedLetterheadConfiguration();
-        await loadPatientsFromGoogleSheets();
-
+        await loadSharedState(true);
+        await loadPatientsFromGoogleSheets(true);
+    } catch (error) {
+        console.error("Initial central load failed:", error);
+        showStatus("formStatus", "Unable to connect to the central server. Check internet connection.", "error");
     }
 
-    catch (error) {
-
-        console.error(
-            "Initial Google Sheets load failed:",
-            error
-        );
-
-    }
-
+    startSharedStateSync();
 }
 
 

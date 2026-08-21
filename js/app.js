@@ -92,24 +92,29 @@ function mergeCentralConfiguration(shared) {
 
 function applyCentralApplicationState(result) {
 
-    if (!result || !result.configured) {
+    if (!result || result.ok === false) {
         return false;
     }
 
-    const incomingCamps = Array.isArray(result.camps)
-        ? result.camps
+    const state = result.configuration || result.config || result;
+    if (!state || !Array.isArray(state.camps)) {
+        return false;
+    }
+
+    const incomingCamps = Array.isArray(state.camps)
+        ? state.camps
         : [];
 
-    const incomingDoctors = Array.isArray(result.doctors)
-        ? result.doctors
+    const incomingDoctors = Array.isArray(state.doctors)
+        ? state.doctors
         : [];
 
     camps = incomingCamps;
     doctors = incomingDoctors;
-    config = mergeCentralConfiguration(result.config);
+    config = mergeCentralConfiguration(state);
 
-    centralConfigVersion = Number(result.version || 0);
-    centralPatientVersion = Number(result.patientVersion || 0);
+    centralConfigVersion = Number(state.version || result.version || 0);
+    centralPatientVersion = Number(result.patientVersion || state.patientVersion || 0);
 
     persistAll();
     renderAdminLists();
@@ -126,7 +131,7 @@ async function loadCentralApplicationState(strict = false) {
 
     try {
         const result = await postToGoogleScript({
-            action: "getAppState"
+            action: "getApplicationConfiguration"
         });
 
         if (result.configured) {
@@ -156,12 +161,12 @@ async function saveCentralApplicationState() {
     }
 
     const result = await postToGoogleScript({
-        action: "saveAppState",
+        action: "saveApplicationConfiguration",
         adminToken: adminSessionToken,
-        camps,
-        doctors,
-        config: {
+        configuration: {
             ...config,
+            camps,
+            doctors,
             letterhead:
                 String(config.letterhead || "").startsWith("data:")
                     ? ""
@@ -183,12 +188,12 @@ async function syncCentralApplicationState() {
 
     try {
         const result = await postToGoogleScript({
-            action: "getAppState"
+            action: "getApplicationConfiguration"
         });
 
         const version = Number(result.version || 0);
 
-        if (result.configured && version !== centralConfigVersion) {
+        if (result.ok !== false && version !== centralConfigVersion) {
             applyCentralApplicationState(result);
         }
     }
@@ -720,47 +725,19 @@ function loadConfiguration() {
 
 function initializeDefaultCamp() {
 
-    if (camps.length === 0) {
+    /*
+       Do NOT create a fake/persistent "Medical Camp" here.
+       The central Google Apps Script configuration is the source of truth.
+       If the admin has deleted every camp, the empty state must remain empty.
+    */
 
-        const defaultCamp = {
-
-            id:
-                createId("CAMP"),
-
-            name:
-                "Medical Camp",
-
-            date:
-                new Date()
-                    .toISOString()
-                    .split("T")[0]
-
-        };
-
-
-        camps.push(
-            defaultCamp
-        );
-
-
-        localStorage.setItem(
-            "medicalCampCamps",
-            JSON.stringify(camps)
-        );
-
-    }
-
-
-    if (!config.activeCampId ||
-        !camps.some(
-            c =>
-                c.id ===
-                config.activeCampId
-        )) {
-
-        config.activeCampId =
-            camps[0].id;
-
+    if (camps.length > 0) {
+        if (!config.activeCampId ||
+            !camps.some(c => c.id === config.activeCampId)) {
+            config.activeCampId = camps[0].id;
+        }
+    } else {
+        config.activeCampId = "";
     }
 
 }
@@ -982,14 +959,8 @@ function addCamp() {
 
 function deleteCamp(id) {
 
-    if (camps.length <= 1) {
-
-        alert(
-            "At least one camp must remain."
-        );
-
+    if (camps.length === 0) {
         return;
-
     }
 
 
@@ -1037,13 +1008,8 @@ function deleteCamp(id) {
         );
 
 
-    if (
-        config.activeCampId === id
-    ) {
-
-        config.activeCampId =
-            camps[0].id;
-
+    if (config.activeCampId === id) {
+        config.activeCampId = camps[0]?.id || "";
     }
 
 
@@ -2347,10 +2313,16 @@ function deleteLetterhead(
     persistAll();
 
     if (isAdmin && adminSessionToken) {
-        void postToGoogleScript({
-            action: "deleteLetterheadConfiguration",
-            adminToken: adminSessionToken
-        })
+        /*
+           config.letterhead / letterheadType / letterheadFileName /
+           letterheadProfiles / margins were already cleared above, so
+           saveCentralApplicationState() will send the cleared values
+           (plus the current camps/doctors) as the new central
+           configuration, and applyCentralApplicationState() will keep
+           this device's cache and version in sync with the server so a
+           stale letterhead cannot reappear on the next background sync.
+        */
+        void saveCentralApplicationState()
             .catch(function (error) {
                 console.error("Central letterhead deletion failed:", error);
                 showStatus("adminStatus", error.message, "error");
@@ -3085,10 +3057,48 @@ function handlePhotoUpload(event) {
 
 function setPatientPhoto(src) {
 
+    /*
+       PHOTO SIZE GUARD
+
+       Rejects an oversized photo on the client before it is ever
+       attached to `patient.photo` and sent to Apps Script. Keep
+       this ceiling in sync with MAX_PHOTO_BYTES in Code.gs.
+    */
+
+    const commaIndex = src.indexOf(",");
+
+    const approxBytes = commaIndex >= 0
+        ? Math.floor((src.length - commaIndex - 1) * 0.75)
+        : 0;
+
+    const maxBytes = 8 * 1024 * 1024;
+
+    if (approxBytes > maxBytes) {
+
+        alert(
+            "This photo is too large (" +
+            (approxBytes / 1024 / 1024).toFixed(1) +
+            " MB). Please choose a photo under 8 MB."
+        );
+
+        console.warn(
+            "setPatientPhoto: rejected oversized photo, approxBytes=" +
+            approxBytes
+        );
+
+        return;
+
+    }
+
     currentPhoto =
         src;
 
     currentPhotoFileId = "";
+
+    console.log(
+        "setPatientPhoto: photo set, approxBytes=" +
+        approxBytes
+    );
 
 
     document
@@ -3412,6 +3422,21 @@ document
             };
 
 
+            /*
+               DIAGNOSTIC LOGGING (photo pipeline)
+               Confirms whether a photo is actually being attached to
+               the outgoing payload before it ever reaches the network.
+            */
+            console.log(
+                "patientForm submit: photo present=" +
+                !!patient.photo +
+                " length=" +
+                (patient.photo ? patient.photo.length : 0) +
+                " editingPatientId=" +
+                (editingPatientId || "(new)")
+            );
+
+
             const submitButton =
                 document.querySelector(
                     '#patientForm button[type="submit"]'
@@ -3479,6 +3504,36 @@ document
                     patient.id;
 
 
+                /*
+                   DIAGNOSTIC LOGGING + HARD CHECK (photo pipeline)
+
+                   If a photo was submitted but the server did not come
+                   back with a photoFileId, the photo upload silently
+                   failed somewhere in Code.gs. Surface that to the user
+                   instead of treating the save as fully successful.
+                */
+                console.log(
+                    "patientForm submit: server photoFileId=" +
+                    (savedPatient.photoFileId || "(none)") +
+                    " photo url=" +
+                    (savedPatient.photo || "(none)")
+                );
+
+                if (currentPhoto && !savedPatient.photoFileId) {
+
+                    console.error(
+                        "patientForm submit: a photo was sent but the server returned no photoFileId.",
+                        saveResult
+                    );
+
+                    alert(
+                        "Patient was saved, but the photo could not be confirmed as uploaded.\n\n" +
+                        "Please re-open this patient, re-attach the photo, and save again."
+                    );
+
+                }
+
+
                 if (editingPatientId) {
 
                     const index =
@@ -3520,7 +3575,10 @@ document
 
 
                 alert(
-                    "Patient could not be saved to Google Sheets.\n\nPlease check your internet connection and try again."
+                    "Patient could not be saved to Google Sheets.\n\n" +
+                    (error && error.message
+                        ? error.message
+                        : "Please check your internet connection and try again.")
                 );
 
 
@@ -3606,7 +3664,18 @@ function preparePrint(patient) {
     photo.style.display = "none";
     photo.removeAttribute("src");
 
+    /*
+       Guard against window.print() firing twice: both the
+       photo.onload/onerror handlers AND the "already cached"
+       branch below can resolve for the same photo.
+    */
+    let printStarted = false;
+
     function startPrinting() {
+
+        if (printStarted) return;
+        printStarted = true;
+
         updatePrintDateTime();
         updatePrintStyles();
         fitPrintContentToAvailableArea();
@@ -3628,7 +3697,7 @@ function preparePrint(patient) {
         photo.onerror = function () {
 
             console.error(
-                "Patient photo failed to load:",
+                "Patient photo failed to load for printing:",
                 patient.photo
             );
 

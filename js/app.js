@@ -216,6 +216,145 @@ async function getNextUHIDFromGoogleSheets(camp) {
 
 
 /* =========================================================
+   SHARED LETTERHEAD CONFIGURATION
+   Stored centrally in Google Apps Script + Drive so every
+   tablet uses the same saved letterhead and margins.
+========================================================= */
+
+async function loadSharedLetterheadConfiguration() {
+
+    try {
+
+        const response = await fetch(
+            GOOGLE_SCRIPT_URL,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "text/plain;charset=utf-8"
+                },
+                body: JSON.stringify({
+                    action: "getLetterheadConfiguration"
+                })
+            }
+        );
+
+        const result = await response.json();
+
+        if (!result.ok) {
+            throw new Error(
+                result.error ||
+                "Failed to load shared letterhead configuration."
+            );
+        }
+
+        if (result.configuration) {
+            const shared = result.configuration;
+
+            config = {
+                ...DEFAULT_CONFIG,
+                ...config,
+                ...shared,
+                margins: {
+                    ...DEFAULT_CONFIG.margins,
+                    ...(config.margins || {}),
+                    ...(shared.margins || {})
+                },
+                letterheadProfiles: {
+                    ...(config.letterheadProfiles || {}),
+                    ...(shared.letterheadProfiles || {})
+                }
+            };
+
+            persistAll();
+            updateApplication();
+            updatePrintStyles();
+            loadLetterheadSettingsToAdmin();
+            updateLetterheadMarginPreview();
+
+            const name =
+                document.getElementById("letterheadFileName");
+
+            if (name) {
+                name.textContent =
+                    config.letterheadFileName || "Letterhead";
+            }
+        }
+
+        console.log(
+            "Shared letterhead configuration loaded."
+        );
+
+        return config;
+
+    }
+    catch (error) {
+
+        console.warn(
+            "Shared letterhead configuration unavailable. Using local cache:",
+            error
+        );
+
+        return config;
+    }
+}
+
+
+async function saveSharedLetterheadConfiguration() {
+
+    const response = await fetch(
+        GOOGLE_SCRIPT_URL,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type":
+                    "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify({
+                action: "saveLetterheadConfiguration",
+                configuration: {
+                    letterhead: config.letterhead || "",
+                    letterheadType: config.letterheadType || "",
+                    letterheadFileName: config.letterheadFileName || "",
+                    letterheadProfiles: config.letterheadProfiles || {},
+                    margins: config.margins || DEFAULT_CONFIG.margins
+                }
+            })
+        }
+    );
+
+    const result = await response.json();
+
+    if (!result.ok) {
+        throw new Error(
+            result.error ||
+            "Failed to save shared letterhead configuration."
+        );
+    }
+
+    if (result.configuration) {
+        config = {
+            ...config,
+            ...result.configuration,
+            margins: {
+                ...DEFAULT_CONFIG.margins,
+                ...(result.configuration.margins || {})
+            },
+            letterheadProfiles: {
+                ...(result.configuration.letterheadProfiles || {})
+            }
+        };
+    }
+
+    persistAll();
+    updateApplication();
+    updatePrintStyles();
+
+    return result;
+}
+
+
+/* =========================================================
    DEFAULT CONFIG
 ========================================================= */
 
@@ -1369,7 +1508,7 @@ function updateLetterheadMarginPreview() {
    CONFIGURATION SAVE
 ========================================================= */
 
-function saveConfiguration() {
+async function saveConfiguration() {
 
     const marginTop =
         Number(
@@ -1380,7 +1519,6 @@ function saveConfiguration() {
                 .value
         );
 
-
     const marginRight =
         Number(
             document
@@ -1389,7 +1527,6 @@ function saveConfiguration() {
                 )
                 .value
         );
-
 
     const marginBottom =
         Number(
@@ -1400,7 +1537,6 @@ function saveConfiguration() {
                 .value
         );
 
-
     const marginLeft =
         Number(
             document
@@ -1410,7 +1546,6 @@ function saveConfiguration() {
                 .value
         );
 
-
     saveCurrentLetterheadSettings({
         top: validNumber(marginTop, 50),
         right: validNumber(marginRight, 15),
@@ -1418,18 +1553,42 @@ function saveConfiguration() {
         left: validNumber(marginLeft, 15)
     });
 
-
+    /* Save locally first so the current device remains responsive. */
     persistAll();
-
     updateApplication();
     loadLetterheadSettingsToAdmin();
     updateLetterheadMarginPreview();
 
     showStatus(
         "adminStatus",
-        `Saved for ${config.letterheadFileName || "current letterhead"}. Preview updated below.`,
+        "Saving letterhead to shared storage...",
         "success"
     );
+
+    try {
+
+        await saveSharedLetterheadConfiguration();
+
+        showStatus(
+            "adminStatus",
+            `Saved for ${config.letterheadFileName || "current letterhead"}. All tablets will use this configuration after refresh.`,
+            "success"
+        );
+
+    }
+    catch (error) {
+
+        console.error(
+            "Shared letterhead save failed:",
+            error
+        );
+
+        showStatus(
+            "adminStatus",
+            "Local copy saved, but shared letterhead could not be saved. Check the connection and try again.",
+            "error"
+        );
+    }
 
 }
 
@@ -4005,6 +4164,7 @@ async function initialize() {
 
     try {
 
+        await loadSharedLetterheadConfiguration();
         await loadPatientsFromGoogleSheets();
 
     }
